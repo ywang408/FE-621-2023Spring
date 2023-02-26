@@ -1,0 +1,124 @@
+---
+title: FE 621 Homework 1 with R
+author: Eric Wang
+date: today
+html:
+    toc: true
+    cold-fold: false
+---
+
+## Define BS formula, vega, and Newton method
+
+```{r}
+# newton method
+newton <- function(f, df, x0, tol = 0.001, N.max = 200){
+  for (n in 1:N.max) {
+    x1 <- x0 - f(x0) / df(x0)
+    if(is.na(x1)) return(NA)
+    if(abs(x1-x0) < tol){
+      break
+    }
+    x0 <- x1
+  }
+  return(x1)
+}
+
+
+# BS Model
+BS.model <- function(type = 'call', S0, K, T1, sigma, r) {
+  d1 <- (log(S0 / K) + (r + 0.5 * sigma ^ 2) * T1) / (sigma * sqrt(T1))
+  d2 <- d1 - sigma * sqrt(T1)
+  if (type == 'call') {
+    return (S0 * pnorm(d1) - exp(-r * T1) * K * pnorm(d2))
+  }
+  else if (type == 'put') {
+    return (-S0 * pnorm(-d1) + exp(-r * T1) * K * pnorm(-d2))
+  }
+}
+
+# vega
+Vega <- function(S0, K, T1, sigma, r) {
+  d1 <- (log(S0 / K) + (r + 0.5 * sigma ^ 2) * T1) / (sigma * sqrt(T1))
+  sqrt(T1) * S0 * dnorm(d1)
+}
+```
+
+## Define wrapper function for calculating implied volatility
+
+```{r}
+# vol
+implied.vol <- function(type = 'call', S0, K, T1, r, P) {
+  price.diff <- function(sigma) {
+    BS.model(type, S0, K, T1, sigma, r) - P
+  }
+  dprice.diff <- function(sigma)
+    Vega(S0, K, T1, sigma, r)
+  return (newton(price.diff, dprice.diff, 0.25))
+}
+
+# to calculate implied volatility for all options
+calc <- function(x, T1){
+  # add a column of price 
+  x$calls$Price <- 0.5*(x$calls$Bid + x$calls$Ask) 
+  x$puts$Price <- 0.5*(x$puts$Bid + x$puts$Ask)
+  
+  # add a column of implied volatility 
+  call.func <- function(K,P)implied.vol('call', S0, K, T1, r, P)
+  put.func <- function(K,P)implied.vol('put', S0, K, T1, r, P)
+  
+  x$calls$ImpliedVol <- mapply(call.func, x$calls$Strike, x$calls$Price)
+  x$puts$ImpliedVol <- mapply(put.func, x$puts$Strike, x$puts$Price)
+  
+  # delete columns 
+  x$calls <- x$calls[c("Bid","Ask","Strike","Price","ImpliedVol")]
+  x$puts <- x$puts[c("Bid","Ask","Strike","Price", "ImpliedVol")]
+  return(x)
+}
+```
+
+## Download all option data
+
+```{r, message=FALSE, warning=FALSE}
+library(quantmod)
+SPY.options.all <- getOptionChain("^SPX", NULL)# all options 
+maturities.SPY <- names(SPY.options.all)# all maturities 
+T.vec <- (as.Date(maturities.SPY,"%b.%d.%Y")-Sys.Date())/365 
+T.vec <- as.numeric(T.vec)# all time to maturities
+S0 <- getQuote("^SPX")$Last
+r <- 4.58 / 100
+```
+
+## Calculation and visualization
+
+```{r}
+SPY.options.all <-
+  mapply(calc, SPY.options.all, T.vec, SIMPLIFY = FALSE)
+
+plot(
+  NA,
+  xlim = c(3000, 5000),
+  ylim = c(0, 1),
+  xlab = "Strike",
+  ylab = "ImpliedVol"
+)
+lines(
+  SPY.options.all$Mar.03.2023$puts$Strike,
+  SPY.options.all$Mar.03.2023$puts$ImpliedVol,
+  col = 'red'
+)
+lines(
+  SPY.options.all$Jul.31.2023$puts$Strike,
+  SPY.options.all$Jul.31.2023$puts$ImpliedVol,
+  col = 'blue'
+)
+lines(
+  SPY.options.all$Nov.17.2023$puts$Strike,
+  SPY.options.all$Nov.17.2023$puts$ImpliedVol,
+  col = 'green'
+)
+legend(
+  "topright",
+  c("Mar.03.2023", "Jul.31.2023", "Nov.17.2023"),
+  fill = c("red", "blue", "green")
+)
+```
